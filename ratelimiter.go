@@ -36,7 +36,7 @@ func New(limit float64, size int) *Limiter {
 
 func (gl *Limiter) getReqLimiter(rid string) *rate.Limiter {
 	item := gl.reqCache.Get(rid)
-	if item == nil {
+	if item != nil {
 		return item.Value().(*rate.Limiter)
 	}
 
