@@ -12,39 +12,67 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const DEFAULT_CACHE_TTL = time.Minute * 5
+const DefaultCacheTTL = time.Minute * 5
 
-var RateErr = errors.New("too many requests")
+var (
+	RateErr = errors.New("too many requests")
+)
 
-// Limiter is a wrapper around the go rate limiter package
-// to handle rate limiting on a request context level.
+type store interface {
+	Get(string) (interface{}, bool)
+	Set(string, interface{})
+}
+
+type localCache struct {
+	c *ccache.Cache
+}
+
+func newLocalCache() *localCache {
+	return &localCache{
+		c: ccache.New(ccache.Configure()),
+	}
+}
+
+func (lc *localCache) Get(k string) (interface{}, bool) {
+	item := lc.c.Get(k)
+	if item.Expired() {
+		return nil, false
+	}
+	return item.Value(), true
+}
+
+func (lc *localCache) Set(k string, v interface{}) {
+	lc.c.Set(k, v, DefaultCacheTTL)
+}
+
 type Limiter struct {
 	sync.Mutex
-	reqCache   *ccache.Cache
+	reqStore   store
 	RateLimit  rate.Limit
 	BucketSize int
 }
 
-func New(limit float64, size int) *Limiter {
+func New(limit float64, size int, reqStore store) *Limiter {
+	if reqStore == nil {
+		reqStore = newLocalCache()
+	}
 	return &Limiter{
 		Mutex:      sync.Mutex{},
-		reqCache:   ccache.New(ccache.Configure()),
+		reqStore:   reqStore,
 		RateLimit:  rate.Limit(limit),
 		BucketSize: size,
 	}
 }
 
 func (gl *Limiter) getReqLimiter(rid string) *rate.Limiter {
-	item := gl.reqCache.Get(rid)
-	if item != nil {
-		return item.Value().(*rate.Limiter)
+	l, ok := gl.reqStore.Get(rid)
+	if ok {
+		return l.(*rate.Limiter)
 	}
 
-	// First time request hit from ip, create a new limiter and add it
-	// to request cache.
-	l := rate.NewLimiter(gl.RateLimit, gl.BucketSize)
-	gl.reqCache.Set(rid, l, DEFAULT_CACHE_TTL)
-	return l
+	newL := rate.NewLimiter(gl.RateLimit, gl.BucketSize)
+	gl.reqStore.Set(rid, newL)
+	return newL
 }
 
 // Wrapper around the time/rate Allow func that first retrives the
