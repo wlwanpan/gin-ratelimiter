@@ -35,7 +35,7 @@ func newLocalCache() *localCache {
 
 func (lc *localCache) Get(k string) (interface{}, bool) {
 	item := lc.c.Get(k)
-	if item.Expired() {
+	if item == nil || item.Expired() {
 		return nil, false
 	}
 	return item.Value(), true
